@@ -1,0 +1,5 @@
+{
+  "name": "LINE Sticker GenAI",
+  "description": "Automatically generate custom LINE sticker sets using Google Gemini models with style selection and background removal.",
+  "requestFramePermissions": []
+}
