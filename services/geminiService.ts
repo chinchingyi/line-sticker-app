@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { StickerPlanItem } from '../types';
 
@@ -6,8 +7,20 @@ import { StickerPlanItem } from '../types';
 // ==========================================
 
 const getAI = () => {
-  // According to @google/genai guidelines, the API key must be obtained exclusively from process.env.API_KEY
-  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+  // 優先使用 Vite 環境變數，如果沒有則嘗試 process.env (Node環境)
+  // 使用 'as any' 避免 TypeScript 檢查錯誤
+  const apiKey = (import.meta as any).env.VITE_API_KEY || process.env.API_KEY;
+
+  if (!apiKey) {
+    throw new Error("API Key 尚未設定。請在 Vercel 環境變數中設定 VITE_API_KEY。");
+  }
+
+  // 檢查使用者是否誤填了 Project ID
+  if (apiKey.startsWith("gen-lang-client") || !apiKey.startsWith("AIza")) {
+    throw new Error(`您輸入的 Key (${apiKey.substring(0, 15)}...) 看起來像是 Project ID。請使用以 "AIza" 開頭的 API Key。`);
+  }
+
+  return new GoogleGenAI({ apiKey });
 };
 
 /**
@@ -31,7 +44,7 @@ export const generateStickerPlan = async (
     - "original_lang": Which language was primary (usually 'tc' for this request).
     
     CRITICAL INSTRUCTIONS FOR TEXT:
-    1. Do NOT include emojis or symbols in the text string (e.g. no ❤️, no ✨). Words only.
+    1. Do NOT include emojis or symbols in the text string (e.g. no❤️, no ✨). Words only.
     2. Use expressive punctuation (e.g. !!, ??) is okay.
     3. Keep text short and punchy.
     
