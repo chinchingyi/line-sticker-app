@@ -7,7 +7,7 @@ import { generateStickerPlan, generateSingleStickerImage } from './services/gemi
 import { processStickerImage } from './utils/imageProcessing';
 import { STICKER_STYLES } from './constants';
 
-const APP_VERSION = "v2.0.3";
+const APP_VERSION = "v2.0.4";
 
 const initialState: AppState = {
   step: 'setup',
@@ -125,9 +125,6 @@ function App() {
     // SERIAL PROCESSING (One by One)
     // Google Free Tier for images is very strict (approx 2-5 RPM).
     // We must go slow.
-    
-    // Batch size 1 = Serial processing
-    const BATCH_SIZE = 1; 
     
     let i = 0;
     while (i < state.stickerPlan.length) {
