@@ -7,7 +7,7 @@ import { generateStickerPlan, generateSingleStickerImage } from './services/gemi
 import { processStickerImage } from './utils/imageProcessing';
 import { STICKER_STYLES } from './constants';
 
-const APP_VERSION = "v1.9.9";
+const APP_VERSION = "v2.0.0";
 
 const initialState: AppState = {
   step: 'setup',
@@ -63,7 +63,7 @@ function App() {
     } catch (error) {
       console.error(error);
       const msg = (error as Error).message;
-      alert(`產生計畫失敗: ${msg} (請確認您的 API Key 額度或設定)`);
+      alert(`產生計畫失敗: ${msg}`);
       setState(prev => ({ ...prev, isThinking: false }));
     }
   };
