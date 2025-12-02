@@ -1,3 +1,4 @@
+
 import { LucideIcon } from 'lucide-react';
 
 export interface StickerStyle {
@@ -21,6 +22,7 @@ export interface GeneratedSticker {
   imageUrl: string; // The raw image from AI
   processedUrl: string; // The 320x320 png with text and transparency
   status: 'pending' | 'generating' | 'success' | 'error';
+  error?: string; // Reason for failure
 }
 
 export type StickerCount = 8 | 16 | 24;

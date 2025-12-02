@@ -7,7 +7,7 @@ import { generateStickerPlan, generateSingleStickerImage } from './services/gemi
 import { processStickerImage } from './utils/imageProcessing';
 import { STICKER_STYLES } from './constants';
 
-const APP_VERSION = "v2.0.4";
+const APP_VERSION = "v2.0.5";
 
 const initialState: AppState = {
   step: 'setup',
@@ -184,6 +184,7 @@ function App() {
           if (abortControllerRef.current?.signal.aborted) break;
           
           const errMsg = error.message || '';
+          
           // Handle Rate Limits (429 or Resource Exhausted)
           if (errMsg.includes('429') || errMsg.includes('Exhausted') || errMsg.includes('quota') || errMsg.includes('RETRY')) {
              console.warn(`Rate limit hit at item ${i}. Waiting 20s...`);
@@ -196,7 +197,7 @@ function App() {
              setState(prev => ({
               ...prev,
               results: prev.results.map(r => 
-                r.id === item.id ? { ...r, status: 'error' } : r
+                r.id === item.id ? { ...r, status: 'error', error: errMsg } : r
               )
              }));
              success = true; // Treated as "done" so we proceed to next
@@ -209,7 +210,7 @@ function App() {
          setState(prev => ({
             ...prev,
             results: prev.results.map(r => 
-              r.id === item.id ? { ...r, status: 'error' } : r
+              r.id === item.id ? { ...r, status: 'error', error: "重試次數過多" } : r
             )
          }));
       }
@@ -262,7 +263,7 @@ function App() {
       }
       setState(prev => ({
          ...prev,
-         results: prev.results.map(r => r.id === id ? { ...r, status: 'error' } : r)
+         results: prev.results.map(r => r.id === id ? { ...r, status: 'error', error: msg } : r)
       }));
     }
   };
