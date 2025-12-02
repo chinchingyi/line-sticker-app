@@ -1,8 +1,9 @@
+
 import React from 'react';
 import JSZip from 'jszip';
 import { GeneratedSticker } from '../types';
 import { downloadBlob, createResizedVariant } from '../utils/imageProcessing';
-import { Download, Loader2, Image as ImageIcon, ArrowLeft, XCircle, Palette, RefreshCw } from 'lucide-react';
+import { Download, Loader2, Image as ImageIcon, ArrowLeft, XCircle, Palette, RefreshCw, AlertCircle } from 'lucide-react';
 
 interface Props {
   stickers: GeneratedSticker[];
@@ -142,8 +143,14 @@ const ResultsGrid: React.FC<Props> = ({
                 )}
 
                 {sticker.status === 'error' && (
-                  <div className="text-red-500 text-xs font-bold bg-red-50 px-3 py-1 rounded-full">
-                    生成失敗
+                  <div className="flex flex-col items-center justify-center text-red-500 p-2 text-center h-full">
+                     <AlertCircle size={24} className="mb-2" />
+                     <div className="text-xs font-bold bg-red-50 px-3 py-1 rounded-full mb-1">
+                        生成失敗
+                     </div>
+                     <p className="text-[10px] text-red-400 leading-tight max-w-[150px]">
+                       {sticker.error || "未知錯誤"}
+                     </p>
                   </div>
                 )}
 

@@ -1,6 +1,8 @@
+
 import React, { useState } from 'react';
 import { STICKER_STYLES, STICKER_COUNTS } from '../constants';
 import { StickerCount, StickerPlanItem } from '../types';
+import { resizeImageFile } from '../utils/imageProcessing';
 import { Upload, Sparkles, Play, Edit2, Image as ImageIcon, Languages, AlertTriangle, Eye, RefreshCw, X } from 'lucide-react';
 
 interface Props {
@@ -34,13 +36,17 @@ const SetupForm: React.FC<Props> = ({
   const [testImage, setTestImage] = useState<string | null>(null);
   const [isTestLoading, setIsTestLoading] = useState(false);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        if (ev.target?.result) setFile(ev.target.result as string);
-      };
-      reader.readAsDataURL(e.target.files[0]);
+      const originalFile = e.target.files[0];
+      try {
+        // Resize image to prevent "Payload Too Large" errors
+        const resizedBase64 = await resizeImageFile(originalFile);
+        setFile(resizedBase64);
+      } catch (err) {
+        console.error("Image resize failed", err);
+        alert("圖片處理失敗，請試著換一張照片");
+      }
     }
   };
 
