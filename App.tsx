@@ -7,7 +7,7 @@ import { generateStickerPlan, generateSingleStickerImage } from './services/gemi
 import { processStickerImage } from './utils/imageProcessing';
 import { STICKER_STYLES } from './constants';
 
-const APP_VERSION = "v2.0.0";
+const APP_VERSION = "v2.0.1";
 
 const initialState: AppState = {
   step: 'setup',
@@ -93,7 +93,7 @@ function App() {
        return rawBase64;
      } catch (e) {
        console.error(e);
-       alert("試畫失敗，請稍後再試");
+       alert("試畫失敗，請檢查 API Key 設定");
        return null;
      }
   };
