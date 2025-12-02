@@ -7,7 +7,7 @@ import { generateStickerPlan, generateSingleStickerImage } from './services/gemi
 import { processStickerImage } from './utils/imageProcessing';
 import { STICKER_STYLES } from './constants';
 
-const APP_VERSION = "v2.0.2";
+const APP_VERSION = "v2.0.3";
 
 const initialState: AppState = {
   step: 'setup',
@@ -122,82 +122,108 @@ function App() {
     const style = STICKER_STYLES.find(s => s.id === state.selectedStyleId);
     const stylePrompt = style ? style.promptModifier : '';
 
-    // Parallel Processing with Rate Limiting
-    const BATCH_SIZE = 3; 
-    const ARTIFICIAL_DELAY = state.count > 16 ? 6000 : 2000; 
+    // SERIAL PROCESSING (One by One)
+    // Google Free Tier for images is very strict (approx 2-5 RPM).
+    // We must go slow.
+    
+    // Batch size 1 = Serial processing
+    const BATCH_SIZE = 1; 
     
     let i = 0;
     while (i < state.stickerPlan.length) {
       if (!isMounted.current || abortControllerRef.current?.signal.aborted) break;
 
-      const batch = state.stickerPlan.slice(i, i + BATCH_SIZE);
+      // Select current item
+      const item = state.stickerPlan[i];
       
+      // Update UI to show "Generating" for this item
       setState(prev => ({
         ...prev,
         results: prev.results.map(r => 
-          batch.some(b => b.id === r.id) ? { ...r, status: 'generating' } : r
+          r.id === item.id ? { ...r, status: 'generating' } : r
         )
       }));
 
-      let batchSuccess = false;
+      let success = false;
       let retryCount = 0;
+      const MAX_RETRIES = 2; // Retry twice if rate limited
       
-      while (!batchSuccess && retryCount < 3) {
+      while (!success && retryCount <= MAX_RETRIES) {
         if (abortControllerRef.current?.signal.aborted) break;
         
         try {
-          await Promise.all(batch.map(async (item) => {
-             const currentResult = state.results.find(r => r.id === item.id);
-             if (currentResult?.status === 'success') return;
+           const currentResult = state.results.find(r => r.id === item.id);
+           // If already done (e.g. resumption), skip
+           if (currentResult?.status === 'success') {
+             success = true;
+             break;
+           }
 
-             const rawBase64 = await generateSingleStickerImage(
+           // Generate Image
+           const rawBase64 = await generateSingleStickerImage(
               item.text,
               stylePrompt,
               state.referenceImage
-            );
+           );
 
-            if (abortControllerRef.current?.signal.aborted) throw new Error("Aborted");
+           if (abortControllerRef.current?.signal.aborted) throw new Error("Aborted");
 
-            const processedBase64 = await processStickerImage(rawBase64, item.text);
+           // Process Image (Remove BG + Text)
+           const processedBase64 = await processStickerImage(rawBase64, item.text);
 
-            setState(prev => ({
+           // Update Success
+           setState(prev => ({
               ...prev,
               results: prev.results.map(r => 
                 r.id === item.id 
                 ? { ...r, status: 'success', imageUrl: rawBase64, processedUrl: processedBase64 } 
                 : r
               )
-            }));
-          }));
-          
-          batchSuccess = true;
+           }));
+           
+           success = true;
 
         } catch (error: any) {
           if (abortControllerRef.current?.signal.aborted) break;
           
           const errMsg = error.message || '';
-          if (errMsg.includes('429') || errMsg.includes('Exhausted') || errMsg.includes('quota')) {
-             console.warn(`Rate limit hit at index ${i}. Waiting 15s before retry...`);
-             await wait(15000); 
+          // Handle Rate Limits (429 or Resource Exhausted)
+          if (errMsg.includes('429') || errMsg.includes('Exhausted') || errMsg.includes('quota') || errMsg.includes('RETRY')) {
+             console.warn(`Rate limit hit at item ${i}. Waiting 20s...`);
+             // Wait longer for retry
+             await wait(20000); 
              retryCount++;
           } else {
-             console.error(`Error generating batch at ${i}`, error);
+             console.error(`Error generating item ${i}`, error);
+             // Mark as error and move on
              setState(prev => ({
               ...prev,
               results: prev.results.map(r => 
-                batch.some(b => b.id === r.id) ? { ...r, status: 'error' } : r
+                r.id === item.id ? { ...r, status: 'error' } : r
               )
              }));
-             batchSuccess = true; 
+             success = true; // Treated as "done" so we proceed to next
           }
         }
       }
 
-      if (i + BATCH_SIZE < state.stickerPlan.length) {
-         await wait(ARTIFICIAL_DELAY);
+      // If we failed after retries
+      if (!success) {
+         setState(prev => ({
+            ...prev,
+            results: prev.results.map(r => 
+              r.id === item.id ? { ...r, status: 'error' } : r
+            )
+         }));
+      }
+
+      // Delay between images to avoid triggering rate limit immediately again
+      // 5 seconds standard delay between successful generations
+      if (i < state.stickerPlan.length - 1) {
+         await wait(5000);
       }
       
-      i += BATCH_SIZE;
+      i++;
     }
   };
 
@@ -233,6 +259,10 @@ function App() {
 
     } catch (e) {
       console.error(e);
+      const msg = (e as Error).message;
+      if (msg.includes('429') || msg.includes('Exhausted')) {
+          alert("額度已滿 (Rate Limit)。請等待約 1 分鐘後再試。");
+      }
       setState(prev => ({
          ...prev,
          results: prev.results.map(r => r.id === id ? { ...r, status: 'error' } : r)
