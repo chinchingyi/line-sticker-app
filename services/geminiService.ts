@@ -1,63 +1,18 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { StickerPlanItem } from '../types';
 
-// 手動宣告 process 變數以解決 TypeScript 在瀏覽器環境找不到 process 的錯誤
-declare var process: any;
-
 // ==========================================
-// API KEY 設定區
+// API KEY Configuration
 // ==========================================
-
-// 1. 請使用 encrypt_key.html 工具產生亂碼
-// 2. 將產生的亂碼貼入下方的雙引號中
-const ENCRYPTED_KEY = "Z2RsLmhkaGAlamZiaWN6IiAgJyIkJiIgLyA="; 
-
+// This service uses process.env.API_KEY as required.
 // ==========================================
-
-// 解密函式 (Simple XOR) - 必須與加密工具邏輯一致
-const decryptKey = (encrypted: string): string => {
-  if (!encrypted) return "";
-  try {
-    return atob(encrypted).split('').map((c, i) => 
-      String.fromCharCode(c.charCodeAt(0) ^ (i % 255))
-    ).join('');
-  } catch (e) {
-    console.error("Failed to decrypt key", e);
-    return "";
-  }
-};
 
 /**
  * Helper to get the AI instance.
- * Priority:
- * 1. process.env.API_KEY (Vercel/Environment variables)
- * 2. Decrypted ENCRYPTED_KEY (Hardcoded obfuscated key)
+ * Accesses process.env.API_KEY
  */
 const getAI = () => {
-  // Try environment variable first
-  let apiKey = undefined;
-  try {
-    if (typeof process !== 'undefined' && process.env) {
-      apiKey = process.env.API_KEY;
-    }
-  } catch (e) {
-    // Ignore error if process is not defined
-  }
-
-  // If not found, try the internal encrypted key
-  if (!apiKey && ENCRYPTED_KEY) {
-    apiKey = decryptKey(ENCRYPTED_KEY);
-  }
-
-  // Check if we still don't have a key
-  if (!apiKey) {
-    // We throw an error here. In a real app, you might want to prompt the user via UI,
-    // but for this specific request (embedded key), we expect it to be present.
-    throw new Error("API Key not found. Please configure API_KEY in environment variables or embed it in geminiService.ts");
-  }
-  
-  return new GoogleGenAI({ apiKey });
+  return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
 /**
@@ -117,8 +72,7 @@ export const generateStickerPlan = async (
     id: index,
     text: `${item.text_tc} (${item.text_en})`,
     originalTc: item.text_tc,
-    originalEn: item.text_en,
-    originalLang: 'both' // Default to both
+    originalEn: item.text_en
   }));
 };
 
