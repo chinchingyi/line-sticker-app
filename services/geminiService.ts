@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { StickerPlanItem } from '../types';
 
 // ==========================================
@@ -151,7 +151,14 @@ export const generateSingleStickerImage = async (
       config: {
         imageConfig: {
           aspectRatio: "1:1"
-        }
+        },
+        // Relax safety settings to avoid blocking harmless caricatures
+        safetySettings: [
+          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+        ]
       }
     });
 
@@ -168,6 +175,10 @@ export const generateSingleStickerImage = async (
     }
 
     if (!base64Image) {
+      // Check if it was blocked due to safety
+      if (response.candidates?.[0]?.finishReason) {
+         throw new Error(`生成被阻擋 (Safety: ${response.candidates[0].finishReason})`);
+      }
       throw new Error("生成失敗：模型未回傳圖片 (No image generated).");
     }
 
@@ -183,6 +194,9 @@ export const generateSingleStickerImage = async (
     }
     if (msg.includes('API key')) {
       throw new Error("API Key 無效或未授權。");
+    }
+    if (msg.includes('Safety') || msg.includes('Blocked')) {
+      throw new Error("安全阻擋：圖片可能被誤判，請換張照片或風格。");
     }
     throw error;
   }
