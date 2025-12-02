@@ -93,7 +93,105 @@ export const generateStickerPlan = async (
 };
 
 /**
- * Step 2: Generate a single image from Caption Text
+ * Step 2a: Generate a 2x2 GRID of stickers (4 stickers in 1 image)
+ * This is the batching strategy to save API calls and time.
+ */
+export const generateStickerGrid = async (
+  captions: string[], // Array of up to 4 captions
+  stylePrompt: string,
+  referenceImageBase64: string | null
+): Promise<string> => {
+  const ai = getAI();
+  const model = 'gemini-2.5-flash-image';
+
+  // Construct a prompt that asks for a grid layout
+  const gridPrompt = `
+    Generate a single character design sheet featuring 4 distinct expressions/poses arranged in a 2x2 grid layout.
+    
+    The 4 expressions should correspond to these meanings:
+    1. Top-Left: ${captions[0] || 'Happy'}
+    2. Top-Right: ${captions[1] || 'Sad'}
+    3. Bottom-Left: ${captions[2] || 'Angry'}
+    4. Bottom-Right: ${captions[3] || 'Excited'}
+    
+    Style Guidelines: ${stylePrompt}
+    
+    Composition Rules:
+    - Output must be a 2x2 grid.
+    - Each quadrant contains ONE character pose.
+    - Background must be solid white (#FFFFFF).
+    - Do NOT draw grid lines if possible, just arrange them neatly.
+    - Character must be consistent across all 4 poses.
+    - NO text inside the grid.
+  `;
+
+  const parts: any[] = [];
+  
+  if (referenceImageBase64) {
+    const data = referenceImageBase64.split(',')[1];
+    const mimeType = referenceImageBase64.substring(
+      referenceImageBase64.indexOf(":") + 1, 
+      referenceImageBase64.indexOf(";")
+    );
+
+    parts.push({
+      inlineData: { mimeType: mimeType, data: data }
+    });
+    parts.push({
+      text: "STRICT: The character in the grid MUST match the provided reference image (same breed/person, accessories)."
+    });
+  }
+
+  parts.push({ text: gridPrompt });
+
+  try {
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: { parts: parts },
+      config: {
+        imageConfig: { aspectRatio: "1:1" },
+        safetySettings: [
+          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+        ]
+      }
+    });
+
+    let base64Image = '';
+    const partsResponse = response.candidates?.[0]?.content?.parts;
+    
+    if (partsResponse) {
+      for (const part of partsResponse) {
+        if (part.inlineData && part.inlineData.data) {
+          base64Image = `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
+          break;
+        }
+      }
+    }
+
+    if (!base64Image) {
+      if (response.candidates?.[0]?.finishReason) {
+         throw new Error(`生成被阻擋 (Safety: ${response.candidates[0].finishReason})`);
+      }
+      throw new Error("生成失敗：模型未回傳圖片");
+    }
+
+    return base64Image;
+
+  } catch (error: any) {
+    console.error("Grid Gen Error:", error);
+    const msg = error.message || '';
+    if (msg.includes('429') || msg.includes('Exhausted') || msg.includes('quota')) {
+      throw new Error("HTTP 429: 配額用盡 (Resource Exhausted)。請等待稍後再試。");
+    }
+    throw error;
+  }
+};
+
+/**
+ * Step 2b: Generate a single image (Fallback or Regenerate Single)
  */
 export const generateSingleStickerImage = async (
   textCaption: string,
@@ -101,7 +199,6 @@ export const generateSingleStickerImage = async (
   referenceImageBase64: string | null
 ): Promise<string> => {
   const ai = getAI();
-  // Using flash-image (free tier has strict limits: ~2-5 RPM)
   const model = 'gemini-2.5-flash-image';
   
   const finalPrompt = `
@@ -152,7 +249,6 @@ export const generateSingleStickerImage = async (
         imageConfig: {
           aspectRatio: "1:1"
         },
-        // Relax safety settings to avoid blocking harmless caricatures
         safetySettings: [
           { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
           { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
@@ -175,7 +271,6 @@ export const generateSingleStickerImage = async (
     }
 
     if (!base64Image) {
-      // Check if it was blocked due to safety
       if (response.candidates?.[0]?.finishReason) {
          throw new Error(`生成被阻擋 (Safety: ${response.candidates[0].finishReason})`);
       }
@@ -188,7 +283,6 @@ export const generateSingleStickerImage = async (
     console.error("Image Gen Error:", error);
     const msg = error.message || '';
     
-    // Convert generic errors to user-friendly messages
     if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
       throw new Error("HTTP 429: 配額用盡 (Resource Exhausted)。請等待 15-30 秒後再試。");
     }
