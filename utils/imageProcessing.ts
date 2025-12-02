@@ -114,6 +114,57 @@ export const processStickerImage = async (
 };
 
 /**
+ * Slices a 2x2 grid image into 4 separate images
+ */
+export const sliceImageGrid = async (
+  gridBase64: string, 
+  itemCount: number // How many valid items we expect (1-4)
+): Promise<string[]> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.src = gridBase64;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error("No context"));
+        return;
+      }
+      
+      const width = img.width;
+      const height = img.height;
+      const cellW = width / 2;
+      const cellH = height / 2;
+      
+      const results: string[] = [];
+      
+      // Coordinates for 2x2 Grid: TL, TR, BL, BR
+      const coords = [
+        { x: 0, y: 0 },
+        { x: cellW, y: 0 },
+        { x: 0, y: cellH },
+        { x: cellW, y: cellH }
+      ];
+
+      // Process only as many as we need (max 4)
+      for (let i = 0; i < Math.min(itemCount, 4); i++) {
+        const { x, y } = coords[i];
+        
+        canvas.width = cellW;
+        canvas.height = cellH;
+        
+        // Draw just that portion
+        ctx.drawImage(img, x, y, cellW, cellH, 0, 0, cellW, cellH);
+        results.push(canvas.toDataURL('image/png'));
+      }
+      
+      resolve(results);
+    };
+    img.onerror = reject;
+  });
+};
+
+/**
  * Creates a resized version of the processed sticker for LINE main.png/tab.png
  */
 export const createResizedVariant = async (
@@ -154,7 +205,7 @@ export const resizeImageFile = async (file: File): Promise<string> => {
       const img = new Image();
       img.src = event.target?.result as string;
       img.onload = () => {
-        const MAX_DIM = 800; // Limit max dimension to 800px
+        const MAX_DIM = 512; // Reduced to 512 for stability
         let width = img.width;
         let height = img.height;
 
