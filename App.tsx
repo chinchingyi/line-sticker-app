@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import SetupForm from './components/SetupForm';
 import ResultsGrid from './components/ResultsGrid';
 import { AppState, StickerPlanItem, StickerCount, GeneratedSticker } from './types';
@@ -7,7 +7,7 @@ import { generateStickerPlan, generateSingleStickerImage } from './services/gemi
 import { processStickerImage } from './utils/imageProcessing';
 import { STICKER_STYLES } from './constants';
 
-const APP_VERSION = "v1.9.8";
+const APP_VERSION = "v1.9.9";
 
 const initialState: AppState = {
   step: 'setup',
