@@ -4,14 +4,9 @@ import { StickerPlanItem } from '../types';
 // ==========================================
 // API KEY Configuration
 // ==========================================
-// This service uses process.env.API_KEY as required.
-// ==========================================
 
-/**
- * Helper to get the AI instance.
- * Accesses process.env.API_KEY
- */
 const getAI = () => {
+  // According to @google/genai guidelines, the API key must be obtained exclusively from process.env.API_KEY
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
