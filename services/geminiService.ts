@@ -7,17 +7,17 @@ import { StickerPlanItem } from '../types';
 // ==========================================
 
 const getAI = () => {
-  // 優先使用 Vite 環境變數，如果沒有則嘗試 process.env (Node環境)
-  // 使用 'as any' 避免 TypeScript 檢查錯誤
-  const apiKey = (import.meta as any).env.VITE_API_KEY || process.env.API_KEY;
+  // STRICT: Only use Vite env variable. 
+  // We do NOT use process.env because it fails in client-side Vite builds often.
+  const apiKey = (import.meta as any).env.VITE_API_KEY;
 
   if (!apiKey) {
-    throw new Error("API Key 尚未設定。請在 Vercel 環境變數中設定 VITE_API_KEY。");
+    throw new Error("API Key 尚未設定。請確認 Vercel 環境變數 VITE_API_KEY 已正確設定。");
   }
 
-  // 檢查使用者是否誤填了 Project ID
+  // Basic Validation
   if (apiKey.startsWith("gen-lang-client") || !apiKey.startsWith("AIza")) {
-    throw new Error(`您輸入的 Key (${apiKey.substring(0, 15)}...) 看起來像是 Project ID。請使用以 "AIza" 開頭的 API Key。`);
+    throw new Error(`您輸入的 Key (${apiKey.substring(0, 10)}...) 格式錯誤。請確認您複製的是 "AIza" 開頭的 API Key，而不是 Project ID。`);
   }
 
   return new GoogleGenAI({ apiKey });
@@ -44,44 +44,52 @@ export const generateStickerPlan = async (
     - "original_lang": Which language was primary (usually 'tc' for this request).
     
     CRITICAL INSTRUCTIONS FOR TEXT:
-    1. Do NOT include emojis or symbols in the text string (e.g. no❤️, no ✨). Words only.
+    1. Do NOT include emojis or symbols in the text string (e.g. no ❤️, no ✨). Words only.
     2. Use expressive punctuation (e.g. !!, ??) is okay.
     3. Keep text short and punchy.
     
     The stickers should cover common emotions: happiness, sadness, anger, love, greeting, goodbye, shock, laughter, etc.
   `;
 
-  const response = await ai.models.generateContent({
-    model: model,
-    contents: "Generate the sticker plan now.",
-    config: {
-      systemInstruction: systemPrompt,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            text_tc: { type: Type.STRING },
-            text_en: { type: Type.STRING }
-          },
-          required: ["text_tc", "text_en"]
+  try {
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: "Generate the sticker plan now.",
+      config: {
+        systemInstruction: systemPrompt,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              text_tc: { type: Type.STRING },
+              text_en: { type: Type.STRING }
+            },
+            required: ["text_tc", "text_en"]
+          }
         }
       }
+    });
+
+    const rawJson = response.text;
+    if (!rawJson) throw new Error("No response from Gemini");
+
+    const parsed = JSON.parse(rawJson);
+    
+    return parsed.map((item: any, index: number) => ({
+      id: index,
+      text: `${item.text_tc} (${item.text_en})`,
+      originalTc: item.text_tc,
+      originalEn: item.text_en
+    }));
+  } catch (error: any) {
+    console.error("Plan Generation Error:", error);
+    if (error.message?.includes("400") || error.message?.includes("API key")) {
+        throw new Error("API Key 無效。請檢查 Vercel 環境變數 VITE_API_KEY。");
     }
-  });
-
-  const rawJson = response.text;
-  if (!rawJson) throw new Error("No response from Gemini");
-
-  const parsed = JSON.parse(rawJson);
-  
-  return parsed.map((item: any, index: number) => ({
-    id: index,
-    text: `${item.text_tc} (${item.text_en})`,
-    originalTc: item.text_tc,
-    originalEn: item.text_en
-  }));
+    throw error;
+  }
 };
 
 /**
@@ -93,6 +101,7 @@ export const generateSingleStickerImage = async (
   referenceImageBase64: string | null
 ): Promise<string> => {
   const ai = getAI();
+  // Using flash-image (free tier has strict limits: ~2-5 RPM)
   const model = 'gemini-2.5-flash-image';
   
   const finalPrompt = `
@@ -133,33 +142,48 @@ export const generateSingleStickerImage = async (
 
   parts.push({ text: finalPrompt });
 
-  const response = await ai.models.generateContent({
-    model: model,
-    contents: {
-      parts: parts
-    },
-    config: {
-      imageConfig: {
-        aspectRatio: "1:1"
+  try {
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: {
+        parts: parts
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: "1:1"
+        }
+      }
+    });
+
+    let base64Image = '';
+    const partsResponse = response.candidates?.[0]?.content?.parts;
+    
+    if (partsResponse) {
+      for (const part of partsResponse) {
+        if (part.inlineData && part.inlineData.data) {
+          base64Image = `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
+          break;
+        }
       }
     }
-  });
 
-  let base64Image = '';
-  const partsResponse = response.candidates?.[0]?.content?.parts;
-  
-  if (partsResponse) {
-    for (const part of partsResponse) {
-      if (part.inlineData && part.inlineData.data) {
-        base64Image = `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
-        break;
-      }
+    if (!base64Image) {
+      throw new Error("生成失敗：模型未回傳圖片 (No image generated).");
     }
-  }
 
-  if (!base64Image) {
-    throw new Error("No image generated.");
-  }
+    return base64Image;
 
-  return base64Image;
+  } catch (error: any) {
+    console.error("Image Gen Error:", error);
+    const msg = error.message || '';
+    
+    // Convert generic errors to user-friendly messages
+    if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
+      throw new Error("HTTP 429: 配額用盡 (Resource Exhausted)。請等待 15-30 秒後再試。");
+    }
+    if (msg.includes('API key')) {
+      throw new Error("API Key 無效或未授權。");
+    }
+    throw error;
+  }
 };
