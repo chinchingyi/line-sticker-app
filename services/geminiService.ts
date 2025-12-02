@@ -2,6 +2,9 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { StickerPlanItem } from '../types';
 
+// 手動宣告 process 變數以解決 TypeScript 在瀏覽器環境找不到 process 的錯誤
+declare var process: any;
+
 // ==========================================
 // API KEY 設定區
 // ==========================================
@@ -33,7 +36,14 @@ const decryptKey = (encrypted: string): string => {
  */
 const getAI = () => {
   // Try environment variable first
-  let apiKey = process.env.API_KEY;
+  let apiKey = undefined;
+  try {
+    if (typeof process !== 'undefined' && process.env) {
+      apiKey = process.env.API_KEY;
+    }
+  } catch (e) {
+    // Ignore error if process is not defined
+  }
 
   // If not found, try the internal encrypted key
   if (!apiKey && ENCRYPTED_KEY) {
