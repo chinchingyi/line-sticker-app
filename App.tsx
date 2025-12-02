@@ -3,11 +3,11 @@ import { useState, useRef, useEffect } from 'react';
 import SetupForm from './components/SetupForm';
 import ResultsGrid from './components/ResultsGrid';
 import { AppState, StickerPlanItem, StickerCount, GeneratedSticker } from './types';
-import { generateStickerPlan, generateSingleStickerImage } from './services/geminiService';
-import { processStickerImage } from './utils/imageProcessing';
+import { generateStickerPlan, generateSingleStickerImage, generateStickerGrid } from './services/geminiService';
+import { processStickerImage, sliceImageGrid } from './utils/imageProcessing';
 import { STICKER_STYLES } from './constants';
 
-const APP_VERSION = "v2.0.5";
+const APP_VERSION = "v2.1.0";
 
 const initialState: AppState = {
   step: 'setup',
@@ -99,7 +99,7 @@ function App() {
      }
   };
 
-  // 3. Start Image Generation
+  // 3. Start Image Generation (Grid Batch Strategy)
   const handleStartGeneration = async () => {
     // Reset abort controller
     abortControllerRef.current = new AbortController();
@@ -122,110 +122,100 @@ function App() {
     const style = STICKER_STYLES.find(s => s.id === state.selectedStyleId);
     const stylePrompt = style ? style.promptModifier : '';
 
-    // SERIAL PROCESSING (One by One)
-    // Google Free Tier for images is very strict (approx 2-5 RPM).
-    // We must go slow.
+    // GRID BATCH PROCESSING
+    // We process 4 stickers at a time (2x2 Grid)
+    // This reduces API calls by 75% (e.g. 24 stickers = 6 calls instead of 24)
+    const BATCH_SIZE = 4;
     
     let i = 0;
     while (i < state.stickerPlan.length) {
       if (!isMounted.current || abortControllerRef.current?.signal.aborted) break;
 
-      // Select current item
-      const item = state.stickerPlan[i];
-      
-      // Update UI to show "Generating" for this item
+      // Get the current batch of 4 items (or less if at the end)
+      const currentBatch = state.stickerPlan.slice(i, i + BATCH_SIZE);
+      const batchIds = currentBatch.map(item => item.id);
+
+      // Update UI to show "Generating" for this batch
       setState(prev => ({
         ...prev,
         results: prev.results.map(r => 
-          r.id === item.id ? { ...r, status: 'generating' } : r
+          batchIds.includes(r.id) ? { ...r, status: 'generating' } : r
         )
       }));
 
-      let success = false;
-      let retryCount = 0;
-      const MAX_RETRIES = 2; // Retry twice if rate limited
-      
-      while (!success && retryCount <= MAX_RETRIES) {
+      try {
+        // 1. Generate ONE 2x2 Grid Image for these 4 items
+        // We pass the texts of all 4 items to the AI
+        const captions = currentBatch.map(item => item.text);
+        
+        const gridBase64 = await generateStickerGrid(
+           captions,
+           stylePrompt,
+           state.referenceImage
+        );
+
+        if (abortControllerRef.current?.signal.aborted) throw new Error("Aborted");
+
+        // 2. Slice the grid into individual images (up to 4)
+        const slicedImages = await sliceImageGrid(gridBase64, currentBatch.length);
+
+        // 3. Process each slice individually (Remove BG + Add Text)
+        // We can do this in parallel as it is local processing
+        const processPromises = slicedImages.map(async (imgBase64, idx) => {
+           const item = currentBatch[idx];
+           const processed = await processStickerImage(imgBase64, item.text);
+           return {
+             id: item.id,
+             raw: imgBase64,
+             processed: processed
+           };
+        });
+
+        const processedResults = await Promise.all(processPromises);
+
+        // 4. Update Success State
+        setState(prev => ({
+           ...prev,
+           results: prev.results.map(r => {
+             const found = processedResults.find(p => p.id === r.id);
+             if (found) {
+               return { ...r, status: 'success', imageUrl: found.raw, processedUrl: found.processed };
+             }
+             return r;
+           })
+        }));
+
+      } catch (error: any) {
         if (abortControllerRef.current?.signal.aborted) break;
         
-        try {
-           const currentResult = state.results.find(r => r.id === item.id);
-           // If already done (e.g. resumption), skip
-           if (currentResult?.status === 'success') {
-             success = true;
-             break;
-           }
-
-           // Generate Image
-           const rawBase64 = await generateSingleStickerImage(
-              item.text,
-              stylePrompt,
-              state.referenceImage
-           );
-
-           if (abortControllerRef.current?.signal.aborted) throw new Error("Aborted");
-
-           // Process Image (Remove BG + Text)
-           const processedBase64 = await processStickerImage(rawBase64, item.text);
-
-           // Update Success
-           setState(prev => ({
-              ...prev,
-              results: prev.results.map(r => 
-                r.id === item.id 
-                ? { ...r, status: 'success', imageUrl: rawBase64, processedUrl: processedBase64 } 
-                : r
-              )
-           }));
-           
-           success = true;
-
-        } catch (error: any) {
-          if (abortControllerRef.current?.signal.aborted) break;
-          
-          const errMsg = error.message || '';
-          
-          // Handle Rate Limits (429 or Resource Exhausted)
-          if (errMsg.includes('429') || errMsg.includes('Exhausted') || errMsg.includes('quota') || errMsg.includes('RETRY')) {
-             console.warn(`Rate limit hit at item ${i}. Waiting 20s...`);
-             // Wait longer for retry
-             await wait(20000); 
-             retryCount++;
-          } else {
-             console.error(`Error generating item ${i}`, error);
-             // Mark as error and move on
-             setState(prev => ({
-              ...prev,
-              results: prev.results.map(r => 
-                r.id === item.id ? { ...r, status: 'error', error: errMsg } : r
-              )
-             }));
-             success = true; // Treated as "done" so we proceed to next
-          }
+        console.error(`Error generating batch starting at ${i}`, error);
+        const errMsg = error.message || "生成失敗";
+        
+        // Mark whole batch as error
+        setState(prev => ({
+          ...prev,
+          results: prev.results.map(r => 
+            batchIds.includes(r.id) ? { ...r, status: 'error', error: errMsg } : r
+          )
+        }));
+        
+        // If rate limited, we might want to pause longer, but usually batching prevents this.
+        if (errMsg.includes('429') || errMsg.includes('Exhausted')) {
+           await wait(10000); 
         }
       }
 
-      // If we failed after retries
-      if (!success) {
-         setState(prev => ({
-            ...prev,
-            results: prev.results.map(r => 
-              r.id === item.id ? { ...r, status: 'error', error: "重試次數過多" } : r
-            )
-         }));
-      }
-
-      // Delay between images to avoid triggering rate limit immediately again
-      // 5 seconds standard delay between successful generations
-      if (i < state.stickerPlan.length - 1) {
-         await wait(5000);
+      // Delay between batches to be safe
+      // 10 seconds delay between grid generations
+      if (i + BATCH_SIZE < state.stickerPlan.length) {
+         await wait(10000);
       }
       
-      i++;
+      i += BATCH_SIZE;
     }
   };
 
-  // 4. Regenerate Single Sticker
+  // 4. Regenerate Single Sticker (Uses Single Image API)
   const handleRegenerateSingle = async (id: number) => {
     const item = state.stickerPlan.find(p => p.id === id);
     if (!item) return;
@@ -258,9 +248,6 @@ function App() {
     } catch (e) {
       console.error(e);
       const msg = (e as Error).message;
-      if (msg.includes('429') || msg.includes('Exhausted')) {
-          alert("額度已滿 (Rate Limit)。請等待約 1 分鐘後再試。");
-      }
       setState(prev => ({
          ...prev,
          results: prev.results.map(r => r.id === id ? { ...r, status: 'error', error: msg } : r)
