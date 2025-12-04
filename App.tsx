@@ -7,7 +7,7 @@ import { generateStickerPlan, generateSingleStickerImage, generateStickerGrid } 
 import { processStickerImage, sliceImageGrid } from './utils/imageProcessing';
 import { STICKER_STYLES } from './constants';
 
-const APP_VERSION = "v2.1.0";
+const APP_VERSION = "v2.1.1";
 
 const initialState: AppState = {
   step: 'setup',
