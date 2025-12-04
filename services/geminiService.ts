@@ -23,6 +23,71 @@ const getAI = () => {
   return new GoogleGenAI({ apiKey });
 };
 
+// ==========================================
+// UTILITIES: Retry & Model Fallback
+// ==========================================
+
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// List of models to try in order. If the first one fails (Quota/429), try the next.
+// gemini-2.0-flash-exp often has separate quotas or is less congested.
+const IMAGE_MODELS = ['gemini-2.5-flash-image', 'gemini-2.0-flash-exp'];
+
+/**
+ * Tries to execute an image generation function.
+ * If it fails with 429/503/Quota, it waits and retries.
+ * If it persists, it switches to the next model in the list.
+ */
+async function retryWithModelFallback<T>(
+  operation: (modelName: string) => Promise<T>
+): Promise<T> {
+  let lastError: any;
+
+  for (const model of IMAGE_MODELS) {
+    // For each model, try up to 3 times with backoff
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        console.log(`Attempting generation with model: ${model} (Try ${attempt}/3)`);
+        return await operation(model);
+      } catch (error: any) {
+        lastError = error;
+        const msg = error.message || '';
+        
+        // Check for retryable errors
+        const isRetryable = 
+          msg.includes('429') || 
+          msg.includes('503') || 
+          msg.includes('RESOURCE_EXHAUSTED') ||
+          msg.includes('quota') ||
+          msg.includes('Overloaded');
+
+        if (isRetryable) {
+          if (attempt < 3) {
+            const delay = attempt * 5000 + 2000; // 7s, 12s, etc.
+            console.warn(`Error with ${model}: ${msg}. Retrying in ${delay}ms...`);
+            await wait(delay);
+            continue; // Retry same model
+          } else {
+            console.warn(`Model ${model} exhausted retries. Switching model...`);
+            // Break inner loop to try next model
+            break; 
+          }
+        } else {
+          // Non-retryable error (e.g. Safety, Invalid Request), throw immediately
+          throw error;
+        }
+      }
+    }
+  }
+
+  // If we get here, all models failed
+  throw lastError;
+}
+
+// ==========================================
+// SERVICES
+// ==========================================
+
 /**
  * Step 1: Generate a plan (Text Only)
  */
@@ -31,7 +96,7 @@ export const generateStickerPlan = async (
   context: string
 ): Promise<StickerPlanItem[]> => {
   const ai = getAI();
-  const model = 'gemini-2.5-flash';
+  const model = 'gemini-2.5-flash'; // Text model is usually fine
   
   const systemPrompt = `
     You are a creative assistant helping to design a LINE sticker set.
@@ -102,7 +167,6 @@ export const generateStickerGrid = async (
   referenceImageBase64: string | null
 ): Promise<string> => {
   const ai = getAI();
-  const model = 'gemini-2.5-flash-image';
 
   // Construct a prompt that asks for a grid layout
   const gridPrompt = `
@@ -144,9 +208,10 @@ export const generateStickerGrid = async (
 
   parts.push({ text: gridPrompt });
 
-  try {
+  // Use the Retry+Fallback Wrapper
+  return retryWithModelFallback(async (modelName) => {
     const response = await ai.models.generateContent({
-      model: model,
+      model: modelName,
       contents: { parts: parts },
       config: {
         imageConfig: { aspectRatio: "1:1" },
@@ -179,15 +244,7 @@ export const generateStickerGrid = async (
     }
 
     return base64Image;
-
-  } catch (error: any) {
-    console.error("Grid Gen Error:", error);
-    const msg = error.message || '';
-    if (msg.includes('429') || msg.includes('Exhausted') || msg.includes('quota')) {
-      throw new Error("HTTP 429: 配額用盡 (Resource Exhausted)。請等待稍後再試。");
-    }
-    throw error;
-  }
+  });
 };
 
 /**
@@ -199,7 +256,6 @@ export const generateSingleStickerImage = async (
   referenceImageBase64: string | null
 ): Promise<string> => {
   const ai = getAI();
-  const model = 'gemini-2.5-flash-image';
   
   const finalPrompt = `
     Generate a LINE sticker image based on this meaning: "${textCaption}".
@@ -239,9 +295,10 @@ export const generateSingleStickerImage = async (
 
   parts.push({ text: finalPrompt });
 
-  try {
+  // Use the Retry+Fallback Wrapper
+  return retryWithModelFallback(async (modelName) => {
     const response = await ai.models.generateContent({
-      model: model,
+      model: modelName,
       contents: {
         parts: parts
       },
@@ -278,20 +335,5 @@ export const generateSingleStickerImage = async (
     }
 
     return base64Image;
-
-  } catch (error: any) {
-    console.error("Image Gen Error:", error);
-    const msg = error.message || '';
-    
-    if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
-      throw new Error("HTTP 429: 配額用盡 (Resource Exhausted)。請等待 15-30 秒後再試。");
-    }
-    if (msg.includes('API key')) {
-      throw new Error("API Key 無效或未授權。");
-    }
-    if (msg.includes('Safety') || msg.includes('Blocked')) {
-      throw new Error("安全阻擋：圖片可能被誤判，請換張照片或風格。");
-    }
-    throw error;
-  }
+  });
 };
